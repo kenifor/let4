@@ -21,8 +21,8 @@ public:
 
     int size() const;
 
-    
-    // используем ассоциативный массив
+    // нужен список слов и счётчиков - используем ассоциативный массив
+
     // функция, которая получаем путь к файлу и считывает триграммы
     bool fileRead(std::filesystem::path pathFile, int treadsCount=1);
 
@@ -30,11 +30,12 @@ public:
 
 private:
     Dictionary trigrams_list;
-    std::mutex mtx;
+    std::mutex mtxTrigList;
 
     int wordCount;
+    std::mutex mtxWordCount;
 
-    void readText(std::vector<std::string>& words);
+    void createTrigrammList(std::vector<std::string>& words);
 
     bool isTrigramm(std::string word) const;
 
