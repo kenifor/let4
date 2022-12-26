@@ -5,11 +5,16 @@
 #include <thread>
 #include <functional> // for std::ref
 
+// пустой конструктор, чтобы была возможность создать объект класса TrigrammDictionary без создания словаря,
+// а словарь можно будет создать позднее, вызвав функцию fileRead()
 TrigrammDictionary::TrigrammDictionary()
 {
 
 }
 
+// дуструктор существует по умолчанию
+
+// конструктор с параметрами, который при создании объекта класса создает и словарь триграмм
 TrigrammDictionary::TrigrammDictionary(std::filesystem::path pathFile, int treadsCount)
 {
     fileRead(pathFile, treadsCount);
@@ -33,11 +38,11 @@ bool TrigrammDictionary::fileRead(std::filesystem::path pathFile, int treadsCoun
     // переменная, по которой потоки обращаются к словам в списке слов (потоки не должны прочитывать слова по несколько раз)
      wordCount = 0;
 
-    // open file (read mode)
+    // открываем файл на чтение, чтобы считать список слов
     std::ifstream file;
     file.open(pathFile, std::ios_base::in);
 
-    // check file opening
+    // проверяем файл на открытие
     if (file.is_open() == false)
     {
         return false;
@@ -46,67 +51,91 @@ bool TrigrammDictionary::fileRead(std::filesystem::path pathFile, int treadsCoun
     std::string word;
     std::vector<std::string> words;
 
+    file >> word;
+
+    // если файл пустой,тогда функция завершает работу
+    if (word == "")
+        return false;
+
     while (file.eof() == false)
     {
-        file >> word;
-
-        // if word is empty then dont add to the vector of words
-        if (word == "")
-            continue;
-
         words.push_back(word);
+        file >> word;
     }
+
     file.close();
 
     if (words.empty())
     {
-        return false;
+       return false;
     }
 
     // использовать потоки, чтобы считывать слова из файла
 
-    // create the list (vector) of threads using smart pointer
-    std::vector<std::unique_ptr<std::thread>> threads;
+    // создаём пустой список потоков
+    std::vector<std::thread> threads;
 
+    // создаем определенное количество потоков
     for (int i = 0; i < treadsCount; i++)
     {
-        // create new thread and run it with function readText
-        threads.push_back(std::make_unique<std::thread>(&TrigrammDictionary::readText, this, std::ref(words)));
+        // создаеём новый поток и запускаем с функцией createTrigrammList
+        // при создании потока в скобках передается три параметра
+        // 1 - указатель на функцию createTrigrammList() класса TrigrammDictionary
+        // 2 - уазатель на текущий объект класса TrigrammDictionary
+        // 3 - ссылку (адрес) на список слов (без копирования)
+        threads.push_back(std::thread(&TrigrammDictionary::createTrigrammList, this, std::ref(words)));
     }
 
+    // основной поток ожидает выполнения созданных потоков (в предыдущем цикле)
     for (int i = 0; i < treadsCount; i++)
     {
-        // main thread must wait other threas
-        threads[i]->join();
+        // указываем основному потоку, чтобы он дождался работы дочерних потоков,
+        // которые занимаются созданием списка триграмм
+        threads[i].join();
     }
 
+    // сортируем список триграмм по частоте появления триграмм
     sort();
 
     return true;
 }
 
+// функция (перегруженный оператор квадратные скобки) возвращает пару (триграмма и количество ее встречь) из списка триграмм
+// по ссылке, то есть то, что уже существует (без копирования)
 std::pair<std::string, int>& TrigrammDictionary::operator[](int index)
 {
     return trigrams_list[index];
 }
 
-void TrigrammDictionary::readText(std::vector<std::string>& words)
+// функция получает сырой список всех слов и записывает их в объект класса TrigrammDictionary
+// эта функция вызывается несколько раз (один раз в каждом созданном потоке)
+void TrigrammDictionary::createTrigrammList(std::vector<std::string>& words)
 {
     std::string word;
 
     while(true)
     {
-        mtx.lock();
+        // переменная wordCount (количество слов) - общая для всех потоков
+        // Эта переменная сигнализирует всем потокам, сколько слов обработано из сырого списка слов (words)
+        mtxWordCount.lock();
+
+        // текущий поток проверяет, не закончились ли слова в списке
         if (wordCount >= words.size())
         {
-            mtx.unlock();
+            // Если глобальная переменная-счетчик достигла размера списка слов, то это означает, что список слов
+            // закончен. И текущему потоку нечего больше обрабатывать.
+            // Поток разблокирует работу остальных потоков
+            mtxWordCount.unlock();
+            // и завершает словю работу
             return;
         }
 
-        int i = wordCount++; // запоминаем текущее слово и увеличиваем глобальную переменную-счетчик на единицу (чтобы следующий поток взял другое слово из списка)
-        mtx.unlock();
+        // запоминаем текущее слово и увеличиваем глобальную переменную-счетчик на единицу (чтобы следующий поток взял другое слово из списка)
+        int i = wordCount++;
+        mtxWordCount.unlock();
 
-        transformToLowerCase(words[i]); // приводим к нижнему регистру
+        // приводим к нижнему регистру текущее слово, чтобы в словаре не было повторений слов
+        transformToLowerCase(words[i]);
 
         // check word consist three letters
         if(isTrigramm(words[i]))
@@ -117,26 +146,26 @@ void TrigrammDictionary::readText(std::vector<std::string>& words)
             // проверить есть ли слово (триграмма) в словаре (списке триграмм)
             for(auto& trigramma: trigrams_list)
             {
-                mtx.lock();
+                mtxTrigList.lock();
                 // если есть, тогда увеличить его число встреч на один
                 if(words[i] == trigramma.first)
                 {
                     trigramma.second += 1;
                     wordExist = true;
-                    mtx.unlock();
+                    mtxTrigList.unlock();
                     break;
                 }
-                mtx.unlock();
+                mtxTrigList.unlock();
             }
 
             // если триграммы нет в словаре, тогда добавить это слово с числом встреч 1
             if (wordExist == false)
             {
-                mtx.lock();
+                mtxTrigList.lock();
                 // чтобы добавить пару (std::pair) в вектор, нужно std::make_pair(fileWord, 1)
                 // слово fileWord встретилось впервые, то есть 1 (один раз)
                 trigrams_list.push_back(std::make_pair(words[i], 1));
-                mtx.unlock();
+                mtxTrigList.unlock();
             }
         }
     }
@@ -150,6 +179,8 @@ bool TrigrammDictionary::isTrigramm(std::string word) const
         return false;
 }
 
+// функция сортирует список триграмм по частоте появления триграмм
+// т.е. та триграмма, которая чаще всего встречается в тексте - она будет первая в списке триграмм
 void TrigrammDictionary::sort()
 {
     // если размер массива задан как нуль или один,тогда сортировать нечего
