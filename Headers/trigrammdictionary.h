@@ -23,7 +23,7 @@ public:
 
     // нужен список слов и счётчиков - используем ассоциативный массив
 
-    // функция, которая получаем путь к файлу и считывает триграммы
+    // функция,которая получаем путь к файлу и считывает триграммы
     bool fileRead(std::filesystem::path pathFile, int treadsCount=1);
 
     std::pair<std::string, int>& operator[](int index);
